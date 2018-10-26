@@ -1,0 +1,158 @@
+DELETE _all
+
+GET sample-2018.*
+
+GET _cat/indices?v
+
+POST sample-2018.10.20/doc
+{"user":{"id":1,"os":0,"lang":"en"},"timestamp":"2018-05-31T14:14:30+0900","hostName":"31c88fe493b3","values":{"hogehoge":"hogehoge"}}
+
+
+# template
+GET _template
+DELETE _template/sample-user
+PUT _template/sample-user
+{
+    // 適応させる、index
+    "index_patterns": "sample-*",
+    "mappings": {
+        "doc":{
+            "properties": {
+                "user": {
+                    "properties": {
+                        "id": {
+                            "type" : "long"
+                        },  
+                        "lv": {
+                            "type" : "short"
+                        },  
+                        "os": {
+                            "type" : "keyword"
+                        },  
+                        "lang": {
+                            "type": "keyword"
+                        }   
+                    }   
+                },  
+                "log_date" : { 
+                    "type": "date",
+                    "format": "yyyy-MM-dd HH:mm:ss||date_optional_time"
+                }   
+            }   
+        }   
+    }   
+}   
+
+//====================================================================================================
+//  watcher
+//      公式ドキュメント https://www.elastic.co/guide/en/x-pack/current/watcher-getting-started.html
+//      クラスメソッド https://dev.classmethod.jp/server-side/elasticsearch/elastic-stack-x-pack-watcher/
+//====================================================================================================
+// 実行履歴を index から取得
+GET .watcher-history-7-2018.08.05/_search
+"sort": [
+    {
+        "result.execution_time": {
+            "order": "desc"
+        }
+    }
+]
+
+GET _xpack/watcher/watch/sample_cpu_watch
+PUT _xpack/watcher/watch/sample_cpu_watch
+{
+    "trigger": {
+        "schedule": {
+            "interval": "1m"    // １分ごとに実行する
+        }
+    },
+    "input": {
+        "search": {
+            "request": {
+                "indices": [
+                    "metricbeat-*"  // input として扱うのは、metricbeat-*
+                ],
+                "body": {
+                    // 対象とするデータを query で filtering
+                    "query": {
+                        "bool": {
+                            "must": [
+                                {
+                                    "query_string": {
+                                        "query": "beat.hostname:live1.sample.net",
+                                        "analyze_wildcard": true,
+                                        "default_field": "*"
+                                    }
+                                },
+                                {
+                                    "range": {
+                                        "@timestamp": {
+                                            "gte": "now-1m" // １分前から、今までの doc を対象
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "aggs": {
+                        // system.cpu.total.pct （cpu の使用率）の 平均を集計する
+                        "system": {
+                            "filter": {
+                                "term": {
+                                    "metricset.name": "cpu"
+                                }
+                            },
+                            "aggs": {
+                                "cpuavg": {
+                                    "avg": {
+                                        "field": "system.cpu.total.pct"
+                                    }
+                                }
+                            }
+                        },
+                        // system.process.name ごとに集計して、 cpu 使用率の高いプロセスを５件取得
+                        "proc": {
+                            "terms": {
+                                "field": "system.process.name",
+                                "order": {
+                                    "cpuusage": "desc"
+                                },
+                                "size": 5
+                            },
+                            "aggs": {
+                                "cpuusage": {
+                                    "avg": {
+                                        "field": "system.process.cpu.total.pct"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "condition": {
+        "compare": {
+            "ctx.payload.aggregations.system.cpuavg.value": {
+                "gte": 10   // 上記で設定した、 system.cpuavg の値が 1000% を超えたら actions を実行する
+            }
+        }
+    },
+    "actions": {
+        "notify-slack": {
+            "throttle_period": "1m",
+            "slack": {
+                "account": "monitoring",
+                "message": {
+                    "from": "Watcher",
+                    "to": [
+                        "#sample_notifications",
+                        "@channel"
+                    ],
+                    "text": "live1.sample cpu usage over 1000%\nrank:\n   No1. {{ctx.payload.aggregations.proc.buckets.0.key}} : {{ctx.payload.aggregations.proc.buckets.0.cpuusage.value}}\n   No2. {{ctx.payload.aggregations.proc.buckets.1.key}} : {{ctx.payload.aggregations.proc.buckets.1.cpuusage.value}}"
+                }
+            }
+        }
+    }
+}
