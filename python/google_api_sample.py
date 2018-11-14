@@ -7,7 +7,6 @@ from oauth2client import client
 from oauth2client import tools
 from oauth2client.service_account import ServiceAccountCredentials
 from oauth2client.file import Storage
-import Common
 
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets',
           'https://www.googleapis.com/auth/drive',
@@ -79,21 +78,7 @@ class GoogleDriveHelper:
         files = result.get('files',[])
         return files
 
-    def get_asuka_general_master_file(self):
-        return self.get_master_file(exclude=['ScenarioMaster'])
-
-    def get_asuka_news_master_file(self):
-        return self.get_master_file(include=['NewsMaster'])
-
     def get_file_list_by_id(self, path_id):
-        """ Google Drive からファイル一覧を取得します
-
-        Args:
-            path_id: string     ディレクトリの id
-
-        Returns:
-            files 配列
-        """
         drive = self._get_drive_client()
         result = drive.files().list(includeTeamDriveItems=True,
                                     supportsTeamDrives=True,
@@ -149,11 +134,11 @@ def main():
     instance = GoogleDriveHelper()
 
     # ディレクトリ配下のファイル一覧取得
-    #file_list = []
-    #print(time.ctime())
-    #instance.get_files_recursive(MASTER_DIRECTORY_ID, file_list)
-    #print(file_list)
-    #print(time.ctime())
+    file_list = []
+    print(time.ctime())
+    instance.get_files_recursive(MASTER_DIRECTORY_ID, file_list)
+    print(file_list)
+    print(time.ctime())
 
     # ディレクトリ配下のファイルの appProperties に、 "master":"1" を設定する
     # Master ディレクトリを指定して、Master ファイル全てに "master":"1" を設定する
@@ -165,9 +150,6 @@ def main():
     #print(time.ctime())
     #self._target_file = self.get_master_file()
     #print(time.ctime())
-
-    instance.get_asuka_news_master_file()
-
 
 if __name__ == '__main__':
     main()
