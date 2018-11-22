@@ -1,0 +1,11 @@
+{{ define "content" }}
+    <div class="col-md-offset-4 col-md-4">
+        <h1> {{ .title }} </h1>
+        <form class="form-signin" role="form" method="POST" action="./login" onsubmit="DisableButton();">
+            <input name="email" type="text" class="form-control" placeholder="Email address" required>
+            <input name="password" type="password" class="form-control" placeholder="Password" required>
+
+            <button id="submitbutton" class="btn btn-lg btn-warning btn-block" type="submit">Login</button>
+        </form>
+     </div>
+{{ end }}
