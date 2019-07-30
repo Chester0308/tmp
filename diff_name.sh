@@ -7,7 +7,8 @@ while read -r line; do
   if [ $(echo $string | grep -e 'Only') ]; then
     path=$(echo "$line" | awk '{print $3}' | sed -e "s/\:/\//");
     fileName=$(echo "$line" | awk '{print $4}');
-    # .DS_SToreはMacのみなので、必要がなければ削除してください
+
+    # .DS_Store
     if [ $fileName != '.DS_Store' ]; then
       echo ${path/$1/$2}$fileName;
       array+=(${path/$1/$2}$fileName);

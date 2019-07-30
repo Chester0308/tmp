@@ -1,0 +1,171 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+
+
+Parameters:
+  AppEnv:
+    Type: String
+
+  AppName:
+    Type: String
+
+  ClusterSize:
+    Type: Number
+    Default: 2
+
+  VpcId:
+    Type: String
+
+  Subnets:
+    Type: List<AWS::EC2::Subnet::Id>
+
+  SourceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup::Id
+
+  ECSSubnet1CIDR:
+    Type: String
+
+  ECSSubnet2CIDR:
+    Type: String
+
+  RDSMasterUserPassword:
+    Type: String
+
+  RDSAppUserPassword:
+    Type: String
+
+  FtpEndpoint:
+    Type: String
+
+  FtpUserPassword:
+    Type: String
+
+  FtpDir:
+    Type: String
+
+Resources:
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub ${AppEnv}-${AppName}-cluster
+
+  RDSMultiAZSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Enable RDS Multi-AZ access.
+      SubnetIds: !Ref Subnets
+
+  ECSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ECS Security Group
+      VpcId: !Ref VpcId
+
+  # ECS Port
+  ECSSecurityGroupHTTPinbound:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ECSSecurityGroup
+      #IpProtocol: tcp
+      IpProtocol: -1
+      FromPort: '32768'
+      ToPort: '61000'
+      SourceSecurityGroupId: !Ref SourceSecurityGroup
+
+  ECSSecurityGroupSubnet1inbound:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ECSSecurityGroup
+      #IpProtocol: tcp
+      IpProtocol: -1
+      FromPort: 0
+      ToPort: 65535
+      CidrIp: !Ref ECSSubnet1CIDR
+
+  ECSSecurityGroupSubnet2inbound:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ECSSecurityGroup
+      #IpProtocol: tcp
+      IpProtocol: -1
+      FromPort: 0
+      ToPort: 65535
+      CidrIp: !Ref ECSSubnet2CIDR
+
+  ECRImageTagSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${AppEnv}-${AppName}-ecr-image-tag
+      Description: ECR Current Image Tag
+      SecretString: latest
+
+  RDSMasterUserPasswordSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${AppEnv}-${AppName}-rds-master-user-password
+      Description: RDS master user password
+      SecretString: !Ref RDSMasterUserPassword
+
+  RDSUserName:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${AppEnv}-${AppName}-rds-app-user-name
+      Description: RDS access user name
+      SecretString: !Sub ${AppEnv}_app
+
+  RDSUserPassword:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${AppEnv}-${AppName}-rds-app-user-password
+      Description: RDS access user password
+      SecretString: !Ref RDSAppUserPassword
+
+  FtpEndpointSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${AppEnv}-${AppName}-ftp-endpoint
+      SecretString: !Ref FtpEndpoint
+
+  FtpUserPasswordSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${AppEnv}-${AppName}-ftp-user-password
+      SecretString: !Ref FtpUserPassword
+
+  FtpDirSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${AppEnv}-${AppName}-ftp-dir
+      SecretString: !Ref FtpDir
+
+
+Outputs:
+  ClusterName:
+    Value: !Ref Cluster
+
+  ECSSecurityGroup:
+    Value: !Ref ECSSecurityGroup
+
+  RDSMultiAZSubnetGroup:
+    Value: !Ref RDSMultiAZSubnetGroup
+
+  ECRImageTag:
+    Value: !Ref ECRImageTagSecret
+
+  RDSMasterUserPasswordSecret:
+    Value: !Ref RDSMasterUserPasswordSecret
+
+  RDSUserName:
+    Value: !Ref RDSUserName
+
+  RDSUserPasswordSecret:
+    Value: !Ref RDSUserPassword
+
+  FtpEndpoint:
+    Value: !Ref FtpEndpointSecret
+
+  FtpUserPassword:
+    Value: !Ref FtpUserPasswordSecret
+
+  FtpDir:
+    Value: !Ref FtpDirSecret

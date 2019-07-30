@@ -1,0 +1,135 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+
+
+Parameters:
+  AppEnv:
+    Type: String
+
+  AppName:
+    Type: String
+
+  GitHubRepo:
+    Type: String
+
+  GitHubBranch:
+    Type: String
+
+  GitHubToken:
+    Type: String
+    NoEcho: true
+
+  GitHubUser:
+    Type: String
+
+Resources:
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+
+  CodeDeployApplication:
+    Type: AWS::CodeDeploy::Application
+    Properties:
+      ApplicationName: !Sub '${AppEnv}-${AppName}-batch-app'
+      ComputePlatform: Server
+
+  CodeDeploymentGroup: 
+    Type: AWS::CodeDeploy::DeploymentGroup
+    Properties:
+      ApplicationName:
+        Ref: 'CodeDeployApplication'
+      DeploymentGroupName: !Sub '${AppEnv}-${AppName}-batch-group'
+      DeploymentConfigName: CodeDeployDefault.OneAtATime
+      Ec2TagFilters:
+        - Type: KEY_AND_VALUE
+          Key: 'Name'
+          Value: !Sub '${AppEnv}-${AppName}-batch'
+      ServiceRoleArn: !GetAtt ['CodeDeployServiceRole', Arn]
+
+  CodeDeployServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codedeploy.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole
+
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      ArtifactStore:
+        Location: !Ref ArtifactBucket
+        Type: S3
+      Name: !Sub '${AppEnv}-${AppName}-batch-pipeline'
+      RoleArn: !GetAtt CodePipelineServiceRole.Arn
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: SourceAction
+              ActionTypeId:
+                Category: Source
+                Owner: ThirdParty
+                Provider: GitHub
+                Version: 1
+              Configuration:
+                Owner: !Ref GitHubUser
+                Repo: !Ref GitHubRepo
+                Branch: !Ref GitHubBranch
+                OAuthToken: !Ref GitHubToken
+              OutputArtifacts:
+                - Name: 'SourceArtifact'
+              RunOrder: 1
+        - Name: Deploy
+          Actions:
+            - Name: Deploy
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CodeDeploy
+              Configuration:
+                ApplicationName: !Ref 'CodeDeployApplication'
+                DeploymentGroupName: !Ref 'CodeDeploymentGroup'
+              RunOrder: 1
+              InputArtifacts:
+                - Name: 'SourceArtifact'
+
+  CodePipelineServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Resource: "*"
+                Effect: Allow
+                Action:
+                  - ec2:*
+                  - elasticloadbalancing:*
+                  - autoscaling:*
+                  - cloudwatch:*
+                  - s3:*
+                  - autoscaling:*
+                  - cloudformation:*
+                  - codedeploy:*
+                  - iam:PassRole
+
+
+Outputs:
+  PipelineUrl:
+    Value: !Sub https://console.aws.amazon.com/codepipeline/home?region=${AWS::Region}#/view/${Pipeline}

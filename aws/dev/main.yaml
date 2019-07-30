@@ -1,0 +1,228 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+
+
+Description: sample 
+
+
+Parameters:
+  AppEnv:
+    Type: String
+    Default: dev
+
+  AppName:
+    Type: String
+    Default: sample
+
+  VpcId:
+    Type: String
+
+  PublicSubnet1:
+    Type: String
+    Description: A reference to the public subnet in the 1st Availability Zone
+
+  PublicSubnet2:
+    Type: String
+    Description: A reference to the public subnet in the 2nd Availability Zone
+
+  PublicSubnet1CIDR:
+    Description: Please enter the IP range (CIDR notation) for the public subnet in the first Availability Zone
+    Type: String
+
+  PublicSubnet2CIDR:
+    Description: Please enter the IP range (CIDR notation) for the public subnet in the second Availability Zone
+    Type: String
+
+  GitHubUser:
+    Type: String
+    Description: Your username on GitHub.
+
+  GitHubRepo:
+    Type: String
+    Description: The repo name of the sample service.
+
+  GitHubBranch:
+    Type: String
+    Default: master
+    Description: The branch of the repo to continuously deploy.
+
+  GitHubToken:
+    Type: String
+    NoEcho: true
+    Description: Token for the user specified above. (https://github.com/settings/tokens)
+
+  HostedZone:
+    Type: String
+    Default: dev.sample.io
+
+  RDSMultiAZSubnetGroup:
+    Type: String
+    Description: RDS Subnet Goup Id
+
+  EC2KeyName:
+    Type: String
+    Description: EC2
+
+  RDSMasterUserPassword:
+    Type: String
+
+  RDSAppUserPassword:
+    Type: String
+
+  RDSAppDatabaseName:
+    Type: String
+
+  GameTop:
+    Type: String
+
+  GameEnd:
+    Type: String
+
+  AppDebug:
+    Type: String
+    Default: true
+
+  FtpEndpoint:
+    Type: String
+
+  FtpUserPassword:
+    Type: String
+
+  FtpDir:
+    Type: String
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterLabels:
+      GitHubUser:
+        default: "User"
+      GitHubRepo:
+        default: "Repo"
+      GitHubBranch:
+        default: "Branch"
+      GitHubToken:
+        default: "Personal Access Token"
+    ParameterGroups:
+      - Label:
+          default: GitHub Configuration
+        Parameters:
+          - GitHubRepo
+          - GitHubBranch
+          - GitHubUser
+          - GitHubToken
+
+Resources:
+  Init:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./templates/init.yaml
+      Parameters:
+        AppEnv: !Ref AppEnv
+        AppName: !Ref AppName
+        VpcId: !Ref VpcId
+        Subnets: !Join [ ",", [ !Ref PublicSubnet1, !Ref PublicSubnet2 ]]
+        SourceSecurityGroup: !GetAtt LoadBalancer.Outputs.SecurityGroup
+        ECSSubnet1CIDR: !Ref PublicSubnet1CIDR
+        ECSSubnet2CIDR: !Ref PublicSubnet2CIDR
+        RDSMasterUserPassword: !Ref RDSMasterUserPassword
+        RDSAppUserPassword: !Ref RDSAppUserPassword
+        FtpEndpoint: !Ref FtpEndpoint
+        FtpUserPassword: !Ref FtpUserPassword
+        FtpDir: !Ref FtpDir
+
+  DeploymentPipeline:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./templates/deployment-pipeline.yaml
+      Parameters:
+        AppEnv: !Ref AppEnv
+        AppName: !Ref AppName
+        Cluster: !GetAtt Init.Outputs.ClusterName
+        Service: !GetAtt Service.Outputs.Service
+        GitHubUser: !Ref GitHubUser
+        GitHubToken: !Ref GitHubToken
+        GitHubRepo: !Ref GitHubRepo
+        GitHubBranch: !Ref GitHubBranch
+
+  LoadBalancer:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./templates/load-balancer.yaml
+      Parameters:
+        AppEnv: !Ref AppEnv
+        AppName: !Ref AppName
+        VpcId: !Ref VpcId
+        Subnets: !Join [ ",", [ !Ref PublicSubnet1, !Ref PublicSubnet2 ]]
+        HostedZone: !Ref HostedZone
+
+  Service:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./templates/service.yaml
+      Parameters:
+        AppEnv: !Ref AppEnv
+        AppName: !Ref AppName
+        Cluster: !GetAtt Init.Outputs.ClusterName
+        TargetGroup: !GetAtt LoadBalancer.Outputs.TargetGroup
+        ECSSecurityGroup: !GetAtt Init.Outputs.ECSSecurityGroup
+        Subnets: !Join [ ",", [ !Ref PublicSubnet1, !Ref PublicSubnet2 ]]
+        PrivateSubnet1: !Ref PublicSubnet1
+        PrivateSubnet2: !Ref PublicSubnet2
+        RDSEndpoint: !GetAtt RDS.Outputs.RDSEndpoint
+        RDSReadEndpoint: !GetAtt RDS.Outputs.RDSReadEndpoint
+        ECRImageTag: !GetAtt Init.Outputs.ECRImageTag
+        RDSUserPasswordSecret: !GetAtt Init.Outputs.RDSUserPasswordSecret
+        RDSAppDatabaseName: !Ref RDSAppDatabaseName
+        GameTop: !Ref GameTop
+        GameEnd: !Ref GameEnd
+        AppDebug: !Ref AppDebug
+
+  RDS:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./templates/rds.yaml
+      Parameters:
+        AppEnv: !Ref AppEnv
+        AppName: !Ref AppName
+        VpcId: !Ref VpcId
+        ECSSecurityGroup: !GetAtt Init.Outputs.ECSSecurityGroup
+        EC2SecurityGroup: !GetAtt EC2.Outputs.EC2SecurityGroup
+        RDSMultiAZSubnetGroup: !GetAtt Init.Outputs.RDSMultiAZSubnetGroup
+        RDSInstanceMasterUsername: root
+        RDSInstancePassword: !Ref RDSMasterUserPassword
+
+  EC2:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./templates/ec2.yaml
+      Parameters:
+        AppEnv: !Ref AppEnv
+        AppName: !Ref AppName
+        VpcId: !Ref VpcId
+        PublicSubnet1: !Ref PublicSubnet1
+        KeyName: !Ref EC2KeyName
+
+  BatchPipeline:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./templates/ec2-batch-pipeline.yaml
+      Parameters:
+        AppEnv: !Ref AppEnv
+        AppName: !Ref AppName
+        GitHubUser: !Ref GitHubUser
+        GitHubToken: !Ref GitHubToken
+        GitHubRepo: !Ref GitHubRepo
+        GitHubBranch: !Ref GitHubBranch
+
+Outputs:
+  ServiceUrl:
+    Description: The sample service that is being continuously deployed.
+    Value: !GetAtt LoadBalancer.Outputs.ServiceUrl
+
+  PipelineUrl:
+    Description: The continuous deployment pipeline in the AWS Management Console.
+    Value: !GetAtt DeploymentPipeline.Outputs.PipelineUrl
+
+  BatchPipelineUrl:
+    Description: The continuous batch pipeline in the AWS Management Console.
+    Value: !GetAtt BatchPipeline.Outputs.PipelineUrl

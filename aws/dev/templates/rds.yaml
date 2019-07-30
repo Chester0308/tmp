@@ -1,0 +1,189 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+
+
+Description: Create RDS Aurora with Multi-AZ
+
+
+Parameters:
+  AppEnv:
+    Type: String
+
+  AppName:
+    Type: String
+
+  VpcId:
+    Description: Spacify VPC ID
+    Type: String
+
+  ECSSecurityGroup:
+    Description: Specify VPC Default Security Group
+    Type: String
+
+  EC2SecurityGroup:
+    Type: String
+
+  RDSInstanceClass:
+    Description: Chose RDS-MySQL instance
+    Type: String
+    Default: db.t2.medium
+    AllowedValues:
+      - db.t2.micro
+      - db.t2.medium
+      - db.t3.small
+      - db.t2.medium
+      - db.r3.large
+      - db.r3.xlarge
+      - db.r3.2xlarge
+      - db.r3.4xlarge
+      - db.r3.8xlarge
+
+  RDSInstanceMasterUsername:
+    Description: RDS master user
+    Default: root
+    Type: String
+    MinLength: '1'
+    MaxLength: '16'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric
+      characters.
+
+  RDSInstancePassword:
+    Description: RDS master password
+    Type: String
+    Default: 'ja9sonn5'
+    NoEcho: true
+    MinLength: '8'
+    MaxLength: '41'
+    AllowedPattern: '[a-zA-Z0-9]*'
+    ConstraintDescription: must contain only alphanumeric characters.
+
+  RDSMultiAZSubnetGroup:
+    Type: String
+
+Resources:
+  RDSDBParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Parameters:
+        internal_tmp_disk_storage_engine: INNODB
+        log_error_verbosity: 2
+        show_compatibility_56: 1
+        innodb_status_output_locks: 1
+        log_slow_admin_statements: OFF
+        range_optimizer_max_mem_size: 8388608
+        innodb_status_output: ON
+        event_scheduler: 'ON'
+      Family: aurora-mysql5.7
+      Description: RDS parameter group for aurora-mysql5.7
+
+  RDSClusterParameterGroup:
+    Type: AWS::RDS::DBClusterParameterGroup
+    Properties:
+      Parameters:
+        time_zone: Asia/Tokyo
+        character_set_client: utf8
+        character_set_connection: utf8
+        character_set_database: utf8
+        character_set_results: utf8
+        character_set_server: utf8
+        slow_query_log: 1
+        general_log: 1
+        log_output: FILE
+        event_scheduler: 'ON'
+      Family: aurora-mysql5.7
+      Description: RDS Cluster parameter group for aurora-mysql5.7
+
+  RDSOptionGroup:
+    Type: AWS::RDS::OptionGroup
+    Properties:
+      EngineName: "aurora-mysql"
+      MajorEngineVersion: "5.7"
+      OptionGroupDescription: 'Aurora mysql 5.7 option group'
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppEnv}-${AppName}-rds-option
+
+  RDSCluster:
+    Type: AWS::RDS::DBCluster
+    Properties:
+      AvailabilityZones:
+      - !Select ['0', !GetAZs '']
+      - !Select ['1', !GetAZs '']
+      MasterUsername: !Ref 'RDSInstanceMasterUsername'
+      MasterUserPassword: !Ref 'RDSInstancePassword'
+      Engine: aurora-mysql
+      EngineVersion: 5.7
+      DBSubnetGroupName: !Ref 'RDSMultiAZSubnetGroup'
+      VpcSecurityGroupIds:
+        - !Ref RDSSecurityGroup
+      DBClusterParameterGroupName: !Ref 'RDSClusterParameterGroup'
+      BackupRetentionPeriod: 7
+
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable RDS access.
+      VpcId: !Ref 'VpcId'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '3306'
+          ToPort: '3306'
+          SourceSecurityGroupId: !Ref 'ECSSecurityGroup'
+        - IpProtocol: tcp
+          FromPort: '3306'
+          ToPort: '3306'
+          SourceSecurityGroupId: !Ref 'EC2SecurityGroup'
+      Tags:
+        - Key: Name
+          Value: !Sub ${AppEnv}-${AppName}-rds
+
+  RDSDBInstance1:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      AvailabilityZone: !Select ['0', !GetAZs '']
+      DBSubnetGroupName: !Ref 'RDSMultiAZSubnetGroup'
+      Engine: aurora-mysql
+      DBClusterIdentifier: !Ref 'RDSCluster'
+      DBParameterGroupName: !Ref 'RDSDBParameterGroup'
+      DBInstanceIdentifier: !Sub ${AppEnv}-${AppName}-rds
+      DBInstanceClass: !Ref 'RDSInstanceClass'
+      AllowMajorVersionUpgrade: 'false'
+      AutoMinorVersionUpgrade: 'false'
+      OptionGroupName: !Ref 'RDSOptionGroup'
+
+  RDSDBInstance2:
+    Type: AWS::RDS::DBInstance
+    DependsOn: RDSDBInstance1
+    Properties:
+      AvailabilityZone: !Select ['1', !GetAZs '']
+      DBSubnetGroupName: !Ref 'RDSMultiAZSubnetGroup'
+      Engine: aurora-mysql
+      DBClusterIdentifier: !Ref 'RDSCluster'
+      DBParameterGroupName: !Ref 'RDSDBParameterGroup'
+      DBInstanceIdentifier: !Sub ${AppEnv}-${AppName}-rds-c
+      DBInstanceClass: !Ref 'RDSInstanceClass'
+      AllowMajorVersionUpgrade: 'false'
+      AutoMinorVersionUpgrade: 'false'
+      OptionGroupName: !Ref 'RDSOptionGroup'
+
+  RDSEndpointSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${AppEnv}-${AppName}-rds-endpoint
+      SecretString: !GetAtt RDSCluster.Endpoint.Address
+      Description: RDS Endpoint
+
+  RDSReadEndpointSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${AppEnv}-${AppName}-rds-read-endpoint
+      SecretString: !GetAtt RDSCluster.ReadEndpoint.Address
+      Description: RDS Read Endpoint
+
+Outputs:
+  RDSEndpoint:
+    Value: !Ref RDSEndpointSecret
+
+  RDSReadEndpoint:
+    Value: !Ref RDSReadEndpointSecret

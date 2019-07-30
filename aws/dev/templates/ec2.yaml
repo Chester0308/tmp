@@ -1,0 +1,418 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+
+
+Parameters:
+  AppEnv:
+    Type: String
+
+  AppName:
+    Type: String
+
+  VpcId:
+    Type: String
+
+  PublicSubnet1:
+    Type: String
+
+  BastionPrivateIp:
+    Type: String
+
+  InstanceType:
+    Type: String
+    Default: t2.micro
+
+  KeyName:
+    Type: String
+
+  LogsRetentionInDays:
+    Description: Specifies the number of days you want to retain log events.
+    Type: Number
+    Default: '365'
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 3653]
+
+  TimeZone:
+    Description: The name of time zone. (e.g. UTC, Asia/Tokyo)
+    Type: String
+    Default: Asia/Tokyo
+
+  AutoRecovery:
+    Description: Specify from parent stack.
+    Type: String
+    Default: 'enable'
+
+Mappings:
+  RegionMap:
+    # amzn-ami-hvm-2017.09.0.20170930-x86_64-gp2
+    'ap-northeast-1':
+      AMI: 'ami-00a5245b4816c38e6'
+
+Conditions:
+  IsAutoRecovery: !Equals [!Ref AutoRecovery, 'enable']
+
+Resources:
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: EC2 Security Group
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Sub '${BastionPrivateIp}/32'
+      Tags:
+        - Key: Name
+          Value: !Sub '${AppEnv}-${AppName}-EC2SG'
+
+  EC2LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '${AppEnv}-${AppName}-batch'
+      RetentionInDays: !Ref 'LogsRetentionInDays'
+
+  EC2:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', AMI]
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref IamInstanceProfile
+      KeyName: !Ref KeyName
+      NetworkInterfaces: 
+        - AssociatePublicIpAddress: true
+          DeviceIndex: 0
+          GroupSet: 
+            - Ref: EC2SecurityGroup
+          SubnetId: 
+            Ref: PublicSubnet1
+      # SecurityGroupIds:
+      #   - !Ref EC2SecurityGroup
+      # SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: !Sub '${AppEnv}-${AppName}-batch'
+      Tenancy: default
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: '30'
+            VolumeType: gp2
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          yum update -y aws-cfn-bootstrap
+          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource EC2 --region ${AWS::Region}
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource EC2 --region ${AWS::Region}
+          reboot
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT5M
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          default:
+            - awslogs
+            - awsmon
+            - cfn-hup
+            - install_basic_packages
+            - install_optional_packages
+            - install_php_packages
+            - configure_basic_setting
+            - deploy_user_setting
+        awslogs: # CloudWatch Logs
+          packages:
+            yum:
+              awslogs: []
+          files:
+            /etc/awslogs/awscli.conf:
+              content: !Sub |
+                [plugins]
+                cwlogs = cwlogs
+                [default]
+                region = ${AWS::Region}
+              mode: '000644'
+              owner: root
+              group: root
+            /etc/awslogs/awslogs.conf:
+              content: !Sub |
+                [general]
+                state_file = /var/lib/awslogs/agent-state
+                [/var/log/messages]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/messages
+                log_stream_name = {instance_id}/var/log/messages
+                log_group_name = ${EC2LogGroup}
+                [/var/log/secure]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/secure
+                log_stream_name = {instance_id}/var/log/secure
+                log_group_name = ${EC2LogGroup}
+                [/var/log/cron]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/cron
+                log_stream_name = {instance_id}/var/log/cron
+                log_group_name = ${EC2LogGroup}
+                [/var/log/cloud-init.log]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/cloud-init.log
+                log_stream_name = {instance_id}/var/log/cloud-init.log
+                log_group_name = ${EC2LogGroup}
+                [/var/log/cfn-init.log]
+                datetime_format = %Y-%m-%d %H:%M:%S
+                file = /var/log/cfn-init.log
+                log_stream_name = {instance_id}/var/log/cfn-init.log
+                log_group_name = ${EC2LogGroup}
+                [/var/log/cfn-hup.log]
+                datetime_format = %Y-%m-%d %H:%M:%S
+                file = /var/log/cfn-hup.log
+                log_stream_name = {instance_id}/var/log/cfn-hup.log
+                log_group_name = ${EC2LogGroup}
+                [/var/log/cfn-init-cmd.log]
+                datetime_format = %Y-%m-%d %H:%M:%S
+                file = /var/log/cfn-init-cmd.log
+                log_stream_name = {instance_id}/var/log/cfn-init-cmd.log
+                log_group_name = ${EC2LogGroup}
+                [/var/log/cloud-init-output.log]
+                file = /var/log/cloud-init-output.log
+                log_stream_name = {instance_id}/var/log/cloud-init-output.log
+                log_group_name = ${EC2LogGroup}
+                [/var/log/dmesg]
+                file = /var/log/dmesg
+                log_stream_name = {instance_id}/var/log/dmesg
+                log_group_name = ${EC2LogGroup}
+                [/var/log/amazon/ssm/amazon-ssm-agent.log]
+                file = /var/log/amazon/ssm/amazon-ssm-agent.log
+                log_stream_name = {instance_id}/var/log/amazon/ssm/amazon-ssm-agent.log
+                log_group_name = ${EC2LogGroup}
+                [/var/log/amazon/ssm/errors.log]
+                file = /var/log/amazon/ssm/errors.log
+                log_stream_name = {instance_id}//var/log/amazon/ssm/errors.log
+                log_group_name = ${EC2LogGroup}
+                [/var/www/api/storage/logs/laravel.log]
+                file = /var/www/api/storage/logs/laravel.log
+                log_stream_name = {instance_id}/var/www/api/storage/logs/laravel.log
+                log_group_name = ${EC2LogGroup}
+                datetime_format = [%a %b %d %H:%M:%S %Y]
+                initial_position = start_of_file
+                buffer_duration = 5000
+              mode: '000644'
+              owner: root
+              group: root
+          services:
+            sysvinit:
+              awslogs:
+                enabled: true
+                ensureRunning: true
+                files:
+                  - /etc/awslogs/awslogs.conf
+                  - /etc/awslogs/awscli.conf
+        awsmon: # Monitoring EC2 with custom metrics (OS-level metric: memory, disk space, etc)
+          packages:
+            yum:
+              perl-Switch: []
+              perl-DateTime: []
+              perl-Sys-Syslog: []
+              perl-LWP-Protocol-https: []
+          sources:
+            /opt/aws: http://aws-cloudwatch.s3.amazonaws.com/downloads/CloudWatchMonitoringScripts-1.2.1.zip
+          files:
+            /etc/cron.d/awsmon:
+              content: |
+                */5 * * * * root /opt/aws/aws-scripts-mon/mon-put-instance-data.pl --mem-util --mem-used --mem-avail --disk-space-util --disk-space-used --disk-space-avail --disk-path=/ --from-cron
+              mode: '000644'
+              owner: root
+              group: root
+          commands:
+            rm_bak_file:
+              command: |
+                rm /etc/cron.d/awsmon.bak || :
+        cfn-hup:
+          files:
+            /etc/cfn/cfn-hup.conf:
+              content: !Sub |
+                [main]
+                stack=${AWS::StackId}
+                region=${AWS::Region}
+                interval=1
+              mode: '000400'
+              owner: root
+              group: root
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.EC2.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --stack=${AWS::StackName} --resource=EC2 --region=${AWS::Region}
+                runas=root
+              mode: '000400'
+              owner: root
+              group: root
+          services:
+            sysvinit:
+              cfn-hup:
+                enabled: true
+                ensureRunning: true
+                files:
+                  - /etc/cfn/cfn-hup.conf
+                  - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+        install_basic_packages:
+          packages:
+            yum:
+              git: []
+              jq: []
+              zsh: []
+              figlet: []
+              sysstat: []
+              mlocate: []
+        install_optional_packages:
+          commands:
+            01_upgrade_awscli:
+              command: pip install awscli --upgrade
+            02_ansible:
+              command: pip install ansible
+            03_cfn-flip:
+              # Convert CloudFormtaion template between json and yaml.
+              # cfn-flip -c [input] [output]
+              command: pip install cfn_flip
+            04_codedeploy_agent:
+              command: |
+                cd /tmp
+                wget https://aws-codedeploy-ap-northeast-1.s3.amazonaws.com/latest/install
+                chmod +x ./install
+                ./install auto
+                rm ./install
+        install_php_packages:
+          packages:
+            yum:
+              php73: []
+              php73-mbstring: []
+              php73-mysqlnd: []
+              php73-pdo: []
+              php73-opcache: []
+              php73-gd: []
+              mysql57: []
+          services:
+            sysvinit:
+              httpd:
+                enabled: false
+                ensureRunning: false
+        configure_basic_setting:
+          files:
+            /opt/chhost.sh:
+              content: !Sub |
+                #!/bin/sh -xe
+                figlet -w 120 ${AppEnv}-${AppName} > /etc/motd.tail
+                update-motd
+                hostname `echo ${AppEnv}-${AppName} | tr "A-Z" "a-z"`
+                sed -i -e "s/HOSTNAME=.*$/HOSTNAME=${AppEnv}-${AppName}/g" /etc/sysconfig/network
+              mode: '000755'
+              owner: root
+              group: root
+          commands:
+            01_change_host:
+              command: /opt/chhost.sh
+            02_grant_sudo_priv_to_wheel_group_with_password:
+              command: sed -i 's/# %wheel\tALL=(ALL)\tALL/%wheel\tALL=(ALL)\tALL/' /etc/sudoers
+            03_change_timezone:
+              command: !Sub
+                sed -i '1 s/UTC/Asia\/Tokyo/' /etc/sysconfig/clock && ln -sf /usr/share/zoneinfo/${TimeZone} /etc/localtime
+        deploy_user_setting:
+          commands:
+            01_deploy_useradd:
+              command: |
+                groupadd -g 20000 deploy
+                useradd -u 20000 -g deploy -G wheel deploy
+                echo "deploy:hogefoo1234" | chpasswd
+                echo "deploy ALL = NOPASSWD: ALL" > /etc/sudoers.d/cfn-init
+                chmod 440 /etc/sudoers.d/cfn-init
+            02_composer:
+              command: |
+                sudo curl -sS https://getcomposer.org/installer | sudo php
+                mv composer.phar /usr/bin/composer
+                chmod +x /usr/bin/composer
+                export COMPOSER_HOME=/root
+
+  IamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+                - ssm.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+      Policies:
+        - PolicyName: !Sub 'policygen-${AppEnv}-${AppName}-clw'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                  - cloudwatch:PutMetricData
+                  - ec2:DescribeTags
+                Effect: Allow
+                Resource: '*'
+        - PolicyName: !Sub 'policygen-${AppEnv}-${AppName}-asm'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Resource:
+                  - !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AppEnv}-${AppName}*
+                  - !Sub arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key:*
+                Effect: Allow
+                Action:
+                  - secretsmanager:*
+                  - kms:Decrypt
+
+  IamInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref 'IamRole'
+      InstanceProfileName: !Sub '${AppEnv}-${AppName}'
+
+  IPAddress:
+    Type: AWS::EC2::EIP
+
+  IPAssoc:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      InstanceId: !Ref EC2
+      EIP: !Ref IPAddress
+
+  RecoveryAlarm:
+    Condition: IsAutoRecovery
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: 'Recovering instance when underlying hardware fails.'
+      Namespace: 'AWS/EC2'
+      MetricName: StatusCheckFailed_System
+      Statistic: Minimum
+      Period: 60
+      EvaluationPeriods: 5
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 0
+      AlarmActions:
+      - !Sub 'arn:aws:automate:${AWS::Region}:ec2:recover'
+      Dimensions:
+      - Name: InstanceId
+        Value: !Ref EC2
+
+Outputs:
+  EC2SecurityGroup:
+    Value: !Ref EC2SecurityGroup
+
+  EC2IP:
+    Value: !Ref IPAddress
